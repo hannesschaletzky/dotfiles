@@ -1,0 +1,14 @@
+# GITHUB
+Host github.com
+  HostName github.com
+  PreferredAuthentications publickey
+  IdentityFile ~/.ssh/github
+
+# FREUNDESKREIS PEUTINGER
+Host fk
+  HostName 159.223.31.124
+  PreferredAuthentications publickey
+  IdentityFile ~/.ssh/freundeskreis-peutinger
+
+
+  
