@@ -1,0 +1,12 @@
+autoconf		guile			libtool			openssl@3
+bdw-gc			heroku			libunistring		p11-kit
+brotli			heroku-node		libusb			pinentry
+c-ares			icu4c			libuv			pkg-config
+ca-certificates		libassuan		m4			python@3.12
+docker-compose		libevent		mpdecimal		python@3.9
+gdbm			libgcrypt		nettle			readline
+gettext			libgpg-error		node			sqlite
+gh			libidn2			node-build		unbound
+gmp			libksba			nodenv			xz
+gnupg			libnghttp2		npth			zsh-syntax-highlighting
+gnutls			libtasn1		openssl@1.1
