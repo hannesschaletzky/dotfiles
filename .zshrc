@@ -4,6 +4,10 @@ export PATH=$HOME/bin:/usr/local/bin:$HOME/.yarn/bin:$PATH
 # Path to your oh-my-zsh installation.
 export ZSH="/Users/hannesschaletzky/.oh-my-zsh"
 
+# Java runtime
+export JAVA_HOME=$(/usr/libexec/java_home -v 22.0.1)
+export PATH=$JAVA_HOME/bin:$PATH
+
 # Set name of the theme to load --- if set to "random", it will
 # load a random theme each time oh-my-zsh is loaded, in which case,
 # to know which specific one was loaded, run: echo $RANDOM_THEME
@@ -11,6 +15,23 @@ export ZSH="/Users/hannesschaletzky/.oh-my-zsh"
 ZSH_THEME="robbyrussell"
 
 alias droplet="~/scripts/connect.sh"
+alias openCfg="code ~/.zshrc"
+alias seePort3000="lsof -i tcp:3000"
+# kill with kill -9 "PID"
+
+# docker testing
+dote() {
+  docker build --platform linux/amd64 -t blu_intune . &&
+  docker-compose up
+}
+
+# docker deploy
+dode() {
+  aws ecr get-login-password | docker login --username AWS --password-stdin 593793026870.dkr.ecr.eu-central-1.amazonaws.com && 
+  docker build --platform linux/amd64 -t blu_intune . && 
+  docker tag blu_intune 593793026870.dkr.ecr.eu-central-1.amazonaws.com/blu_intune:latest && 
+  docker push 593793026870.dkr.ecr.eu-central-1.amazonaws.com/blu_intune:latest
+}
 
 # Set list of themes to pick from when loading at random
 # Setting this variable when ZSH_THEME=random will cause zsh to load
@@ -102,4 +123,6 @@ source $ZSH/oh-my-zsh.sh
 # alias zshconfig="mate ~/.zshrc"
 # alias ohmyzsh="mate ~/.oh-my-zsh"
 
-source /opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+# nodenv
+export PATH="$HOME/.nodenv/bin:$PATH"
+eval "$(nodenv init - zsh)"
