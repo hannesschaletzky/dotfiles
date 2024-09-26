@@ -1,0 +1,17 @@
+{
+  "Print empty": {
+    "prefix": "cll",
+    "body": ["console.log($1)"],
+    "description": "Log output to console"
+  },
+  "Print string": {
+    "prefix": "cls",
+    "body": ["console.log('$1');"],
+    "description": "Log output to console"
+  },
+  "String interpolation": {
+    "prefix": "si",
+    "body": ["`${$1}`"],
+    "description": "String interpolation"
+  }
+}

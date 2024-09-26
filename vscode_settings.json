@@ -1,0 +1,23 @@
+{
+  "editor.fontSize": 14,
+  "editor.tabSize": 2,
+  "editor.formatOnPaste": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "workbench.startupEditor": "none",
+  "git.enableSmartCommit": true,
+  "explorer.confirmDelete": false,
+  "editor.formatOnSave": true,
+  "typescript.updateImportsOnFileMove.enabled": "always",
+  "git.confirmSync": false,
+  "security.workspace.trust.untrustedFiles": "open",
+  "explorer.confirmDragAndDrop": false,
+  "javascript.updateImportsOnFileMove.enabled": "always",
+  "svelte.enable-ts-plugin": true,
+  "svelte.plugin.svelte.note-new-transformation": false,
+  "editor.tabCompletion": "on",
+  "codetogether.userName": "Hannes",
+  "editor.unicodeHighlight.allowedCharacters": {
+    "️": true
+  },
+  "workbench.editor.empty.hint": "hidden"
+}
