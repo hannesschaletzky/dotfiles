@@ -21,5 +21,14 @@
 
   "security.workspace.trust.untrustedFiles": "open",
   "workbench.startupEditor": "none",
-  "workbench.editor.empty.hint": "hidden"
+  "workbench.editor.empty.hint": "hidden",
+  "files.associations": {
+    ".local.env": "properties",
+    ".test.env": "properties"
+  },
+  "playwright.reuseBrowser": true,
+  "playwright.showTrace": false,
+  "explorer.confirmPasteNative": false,
+
+  "workbench.externalBrowser": "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
 }
