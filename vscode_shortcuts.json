@@ -36,11 +36,6 @@
     "when": "textInputFocus && !editorReadonly"
   },
   {
-    "key": "shift+cmd+k",
-    "command": "-editor.action.deleteLines",
-    "when": "textInputFocus && !editorReadonly"
-  },
-  {
     "key": "cmd+k cmd+q",
     "command": "-workbench.action.navigateToLastEditLocation"
   },
@@ -97,7 +92,15 @@
     "command": "-workbench.action.reopenClosedEditor"
   },
   {
-    "key": "shift+cmd+t",
+    "key": "shift+cmd+k",
     "command": "workbench.action.terminal.new"
+  },
+  {
+    "key": "cmd+9",
+    "command": "workbench.action.terminal.resizePaneDown"
+  },
+  {
+    "key": "cmd+0",
+    "command": "workbench.action.terminal.resizePaneUp"
   }
 ]
