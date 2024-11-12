@@ -6,9 +6,13 @@ Host github.com
 
 # FREUNDESKREIS PEUTINGER
 Host fk
-  HostName 159.223.31.124
+  HostName IP
   PreferredAuthentications publickey
   IdentityFile ~/.ssh/freundeskreis-peutinger
 
-
-  
+# BEACHFACTORY
+Host bf
+  HostName IP
+  User root
+  PreferredAuthentications publickey
+  IdentityFile ~/.ssh/beachfactory
