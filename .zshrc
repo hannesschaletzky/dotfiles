@@ -14,23 +14,68 @@ export PATH=$JAVA_HOME/bin:$PATH
 # See https://github.com/ohmyzsh/ohmyzsh/wiki/Themes
 ZSH_THEME="robbyrussell"
 
-alias droplet="~/scripts/connect.sh"
 alias openCfg="code ~/.zshrc"
 alias seePort3000="lsof -i tcp:3000"
 # kill with kill -9 "PID"
 
-# docker testing
+alias jvb="jest --verbose --silent=false"
+alias c="clear"
+
+# token for private org packages blu_systems
+export NPM_TOKEN=""
+
+# update blue shared
+ubs() {
+  echo "update @blu_systems/shared"
+  npm install @blu_systems/shared@latest 
+}
+
+# argument needs to match an allowed app
+check_input() {
+  local value="$1"
+  local allowed_values=("blu_e2e_test" "blu_intune")
+
+  for element in "${allowed_values[@]}"; do
+    if [[ "$value" == "$element" ]]; then
+      echo "valid parameter: $value"
+      return 0  # success
+    fi
+  done
+
+  echo "please provide a valid parameter"
+  echo "allowed are: ${allowed_values[*]}"
+  return 1  # failure
+}
+
+AWS_REGION="eu-central-1"
+ACCOUNT_ID=""
+AWS_URL=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+# create repo 
+ecr_create() {
+  check_input $1 || return 1
+
+  aws ecr get-login-password | docker login --username AWS --password-stdin $AWS_URL
+  aws ecr create-repository --repository-name $1 --region $AWS_REGION --image-scanning-configuration scanOnPush=true --image-tag-mutability MUTABLE
+  aws ecr set-repository-policy --repository-name $1 --policy-text file://~/repos/0_customers/blu/blu_integrations/ecr_repo_policy.json
+}
+
+# docker test
 dote() {
-  docker build --platform linux/amd64 -t blu_intune . &&
+  check_input $1 || return 1
+
+  docker build --platform linux/amd64 -t $1 . &&
   docker-compose up
 }
 
 # docker deploy
 dode() {
-  aws ecr get-login-password | docker login --username AWS --password-stdin 593793026870.dkr.ecr.eu-central-1.amazonaws.com && 
-  docker build --platform linux/amd64 -t blu_intune . && 
-  docker tag blu_intune 593793026870.dkr.ecr.eu-central-1.amazonaws.com/blu_intune:latest && 
-  docker push 593793026870.dkr.ecr.eu-central-1.amazonaws.com/blu_intune:latest
+  check_input $1 || return 1
+
+  aws ecr get-login-password | docker login --username AWS --password-stdin $AWS_URL
+  docker build --platform linux/amd64 -t $1 .
+  docker tag $1 $AWS_URL/"$1":latest
+  docker push $AWS_URL/"$1":latest
 }
 
 # Set list of themes to pick from when loading at random
