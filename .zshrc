@@ -18,11 +18,24 @@ alias openCfg="code ~/.zshrc"
 alias seePort3000="lsof -i tcp:3000"
 # kill with kill -9 "PID"
 
+kill_processes_on_5000() {
+  pids=$(lsof -t -i tcp:5000)
+  
+  if [ -z "$pids" ]; then
+    echo "No processes found on TCP port 5000."
+  else
+    echo $pids | xargs kill -9
+    echo "Killed processes on TCP port 5000."
+  fi
+}
+
 alias jvb="jest --verbose --silent=false"
 alias c="clear"
+alias n1="npm run build"
+alias n2="npm run publish:patch"
 
 # token for private org packages blu_systems
-export NPM_TOKEN=""
+export NPM_TOKEN=
 
 # update blue shared
 ubs() {
@@ -30,26 +43,23 @@ ubs() {
   npm install @blu_systems/shared@latest 
 }
 
-# argument needs to match an allowed app
-check_input() {
-  local value="$1"
-  local allowed_values=("blu_e2e_test" "blu_intune")
-
-  for element in "${allowed_values[@]}"; do
-    if [[ "$value" == "$element" ]]; then
-      echo "valid parameter: $value"
-      return 0  # success
-    fi
-  done
-
-  echo "please provide a valid parameter"
-  echo "allowed are: ${allowed_values[*]}"
-  return 1  # failure
+get_docker_name() {
+  # check if docker.txt exists
+  if [[ -f "docker.txt" ]]; then
+    local docker_name
+    docker_name=$(<docker.txt) 
+    echo "docker.txt: $docker_name" >&2
+    echo $docker_name
+  else
+    echo "Error: docker.txt file not found." >&2
+    return 1
+  fi
 }
 
 AWS_REGION="eu-central-1"
-ACCOUNT_ID=""
+ACCOUNT_ID="_"
 AWS_URL=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+# _.dkr.ecr.eu-central-1.amazonaws.com
 
 # create repo 
 ecr_create() {
@@ -62,21 +72,28 @@ ecr_create() {
 
 # docker test
 dote() {
-  check_input $1 || return 1
+  local name
+  name=$(get_docker_name) || return 1
 
-  docker build --platform linux/amd64 -t $1 . &&
+  docker build --platform linux/amd64 -t $name .
   docker-compose up
 }
 
 # docker deploy
 dode() {
-  check_input $1 || return 1
+  local name
+  name=$(get_docker_name) || return 1
 
   aws ecr get-login-password | docker login --username AWS --password-stdin $AWS_URL
-  docker build --platform linux/amd64 -t $1 .
-  docker tag $1 $AWS_URL/"$1":latest
-  docker push $AWS_URL/"$1":latest
+  docker build --platform linux/amd64 -t $name .
+  docker tag $name $AWS_URL/"$name":latest
+  docker push $AWS_URL/"$name":latest
 }
+
+
+
+
+
 
 # Set list of themes to pick from when loading at random
 # Setting this variable when ZSH_THEME=random will cause zsh to load
