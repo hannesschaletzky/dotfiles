@@ -57,42 +57,364 @@ get_docker_name() {
 }
 
 AWS_REGION="eu-central-1"
-ACCOUNT_ID="_"
-AWS_URL=$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
-# _.dkr.ecr.eu-central-1.amazonaws.com
+AWS_ACCOUNT_ID="593793026870"
+AWS_ECR_URL=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+AWS_PROFILE_NAME="cli-profile"
+# 593793026870.dkr.ecr.eu-central-1.amazonaws.com
 
 # create repo 
 ecr_create() {
-  check_input $1 || return 1
-
-  aws ecr get-login-password | docker login --username AWS --password-stdin $AWS_URL
-  aws ecr create-repository --repository-name $1 --region $AWS_REGION --image-scanning-configuration scanOnPush=true --image-tag-mutability MUTABLE
-  aws ecr set-repository-policy --repository-name $1 --policy-text file://~/repos/0_customers/blu/blu_integrations/ecr_repo_policy.json
-}
-
-# docker test
-dote() {
   local name
   name=$(get_docker_name) || return 1
 
-  docker build --platform linux/amd64 -t $name .
+  aws ecr get-login-password | docker login --username AWS --password-stdin $AWS_ECR_URL
+  aws ecr create-repository --repository-name $name --region $AWS_REGION --image-scanning-configuration scanOnPush=true --image-tag-mutability MUTABLE
+  aws ecr set-repository-policy --repository-name $name --policy-text file://~/repos/0_customers/blu/blu_integrations/ecr_repo_policy.json
+}
+
+# run docker image locally
+docker-local() {
+  local name
+  name=$(get_docker_name) || return 1
+
+  # check if docker-compose.yml exists
+  if [[ ! -f "docker-compose.yml" ]]; then
+    echo "Error: docker-compose.yml file not found." >&2
+    return 1
+  fi
+
+  docker-compose down
+  docker-compose build
   docker-compose up
 }
 
-# docker deploy
-dode() {
+# deploy to ecr
+docker-deploy-to-ecr() {
   local name
   name=$(get_docker_name) || return 1
 
-  aws ecr get-login-password | docker login --username AWS --password-stdin $AWS_URL
-  docker build --platform linux/amd64 -t $name .
-  docker tag $name $AWS_URL/"$name":latest
-  docker push $AWS_URL/"$name":latest
+  allowed_names=("blu_intune" "blu_outlook" "blu_toolbox")
+  if [[ ! " ${allowed_names[@]} " =~ " $name " ]]; then
+    echo "Error: '$name' is not allowed to be deployed to ecr." >&2
+    return 1
+  fi
+
+  aws ecr get-login-password | docker login --username AWS --password-stdin $AWS_ECR_URL
+  docker build \
+    -f Dockerfile.prod \
+    --no-cache \
+    --platform linux/amd64 \
+    -t $name .
+  docker tag $name $AWS_ECR_URL/"$name":latest
+  docker push $AWS_ECR_URL/"$name":latest
+}
+
+# deploys to docker hub
+DOCKER_HUB_ACCOUNT_NAME="hannesschaletzky"
+docker-deploy-to-dockerhub() {
+  local name version
+  name=$(get_docker_name) || return 1
+  version=$(node -p "require('./package.json').version")
+
+  if [[ "$name" != "blu_mid_server" ]]; then
+    echo "only 'blu_mid_server' can be deployed to dockerhub." >&2
+    return 1
+  fi
+  if [[ -z "$version" ]]; then
+    echo "Error: version not found in package.json." >&2
+    return 1
+  fi
+
+  docker build \
+    -f Dockerfile.prod \
+    --no-cache \
+    --platform linux/amd64 \
+    -t $name .
+  
+  docker tag $name $DOCKER_HUB_ACCOUNT_NAME/"$name":latest
+  docker tag $name $DOCKER_HUB_ACCOUNT_NAME/"$name":v$version
+  
+  docker push $DOCKER_HUB_ACCOUNT_NAME/"$name":latest
+  docker push $DOCKER_HUB_ACCOUNT_NAME/"$name":v$version
+
+  echo "✅ published v$version to $DOCKER_HUB_ACCOUNT_NAME/$name"
+}
+
+# -> publish mid server
+pms() {
+  git add .
+  git commit -m "edits"
+  npm version patch
+  git push origin main
+  git push origin --tags
 }
 
 
+upgradeAllDependecies() {
+  npx npm-check-updates -u
+  npm install
+}
+
+# Function to select an environment
+select_environment() {
+  local ENVIRONMENTS=("development" "demo" "test" "e2e" "qa" "production")
+
+  # Use fzf for selection
+  local SELECTED_ENV=$(printf "%s\n" "${ENVIRONMENTS[@]}" | fzf --prompt="Select an environment: ")
+
+  # Check if a valid environment was selected
+  if [ -z "$SELECTED_ENV" ]; then
+    echo "No environment selected. Exiting..."
+    exit 1
+  fi
+
+  echo "$SELECTED_ENV"  # Return selected environment
+}
+
+# use like this: createMidServerResources tal-oil-it
+createMidServerResources() {
+  if [ -z "$1" ]; then
+    echo "Error: customer name is required as the first argument." >&2
+    return 1
+  fi
+
+  CUSTOMER=$1
+  ENV=$(select_environment)
+  POLICY_NAME=$(getPolicyName "$CUSTOMER" "$ENV")
+  GROUP_NAME=$(getGroupName "$CUSTOMER" "$ENV")
+  USER_NAME=$(getUserName "$CUSTOMER" "$ENV")
+  BUCKET_NAME=$(getBucketName "$CUSTOMER" "$ENV")
+  echo "Customer: $CUSTOMER"
+  echo "Env: $ENV"
+  echo "Policy: $POLICY_NAME"
+  echo "Group: $GROUP_NAME"
+  echo "User: $USER_NAME"
+  echo "Bucket: $BUCKET_NAME"
 
 
+  echo "Creating SQS Queues for customer: $CUSTOMER"
+  for queue_type in in out;
+  do
+    QUEUE_NAME="${CUSTOMER}_${ENV}_${queue_type}.fifo"
+    aws sqs create-queue \
+    --queue-name "${QUEUE_NAME}" \
+    --attributes '{
+      "FifoQueue":"true",
+      "ContentBasedDeduplication":"true",
+      "MessageRetentionPeriod":"1209600", 
+      "VisibilityTimeout":"30",
+      "DelaySeconds":"0",
+      "ReceiveMessageWaitTimeSeconds":"0",
+      "MaximumMessageSize":"262144",
+      "DeduplicationScope":"messageGroup",
+      "FifoThroughputLimit": "perMessageGroupId"
+    }' \
+    --profile $AWS_PROFILE_NAME
+  echo "✅ ${QUEUE_NAME} created"
+  done
+  
+  # create S3 bucket
+  aws s3api create-bucket \
+  --bucket "${BUCKET_NAME}" \
+  --region "${AWS_REGION}" \
+  --create-bucket-configuration LocationConstraint="${AWS_REGION}" \
+  --profile $AWS_PROFILE_NAME
+  echo "✅ S3 bucket created: ${BUCKET_NAME}"
+
+  # create IAM Policy
+  POLICY_DOCUMENT=$(cat <<EOF
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "1",
+            "Effect": "Allow",
+            "Action": [
+                "sqs:DeleteMessage",
+                "sqs:ReceiveMessage"
+            ],
+            "Resource": "arn:aws:sqs:${AWS_REGION}:${AWS_ACCOUNT_ID}:${CUSTOMER}_${ENV}_in.fifo"
+        },
+        {
+            "Sid": "2",
+            "Effect": "Allow",
+            "Action": [
+                "sqs:SendMessage"
+            ],
+            "Resource": "arn:aws:sqs:${AWS_REGION}:${AWS_ACCOUNT_ID}:${CUSTOMER}_${ENV}_out.fifo"
+        },
+        {
+            "Sid": "3",
+            "Effect": "Allow",
+            "Action": [
+                "s3:PutObject"
+            ],
+            "Resource": "arn:aws:s3:::${BUCKET_NAME}/*"
+        }
+    ]
+}
+EOF
+)
+
+  # save policy JSON to a file
+  POLICY_FILE="/tmp/${POLICY_NAME}.json"
+  echo "$POLICY_DOCUMENT" > "$POLICY_FILE"
+
+  # create IAM Policy
+  POLICY_ARN=$(aws iam create-policy \
+    --policy-name ${POLICY_NAME} \
+    --policy-document "file://${POLICY_FILE}" \
+    --query 'Policy.Arn' --output text \
+    --profile $AWS_PROFILE_NAME)
+  echo "✅ IAM Policy created: ${POLICY_ARN}"
+
+  # create IAM User Group
+  aws iam create-group \
+    --group-name $GROUP_NAME \
+    --profile $AWS_PROFILE_NAME
+  echo "✅ IAM Group created: $GROUP_NAME"
+
+  # attach policy to group
+  aws iam attach-group-policy \
+    --group-name $GROUP_NAME \
+    --policy-arn $POLICY_ARN \
+    --profile $AWS_PROFILE_NAME
+  echo "✅ attach-policy-to-group: $GROUP_NAME"  
+
+  # create IAM User
+  aws iam create-user \
+    --user-name $USER_NAME \
+    --profile $AWS_PROFILE_NAME
+  aws iam add-user-to-group \
+    --user-name $USER_NAME \
+    --group-name $GROUP_NAME \
+    --profile $AWS_PROFILE_NAME
+  echo "✅ add-user-to-group: $USER_NAME"
+}
+
+deleteMidServerResources() {
+  if [ -z "$1" ]; then
+    echo "Error: customer name is required as the first argument." >&2
+    return 1
+  fi
+
+  CUSTOMER=$1
+  ENV=$(select_environment)
+  POLICY_NAME=$(getPolicyName "$CUSTOMER" "$ENV")
+  GROUP_NAME=$(getGroupName "$CUSTOMER" "$ENV")
+  USER_NAME=$(getUserName "$CUSTOMER" "$ENV")
+  BUCKET_NAME=$(getBucketName "$CUSTOMER" "$ENV")
+  echo "Customer: $CUSTOMER"
+  echo "Env: $ENV"
+  echo "Policy: $POLICY_NAME"
+  echo "Group: $GROUP_NAME"
+  echo "User: $USER_NAME"
+  echo "Bucket: $BUCKET_NAME"
+
+  for queue_type in in out;
+  do
+    QUEUE_NAME="${CUSTOMER}_${ENV}_${queue_type}.fifo"
+    aws sqs delete-queue \
+      --queue-url https://sqs.${AWS_REGION}.amazonaws.com/${AWS_ACCOUNT_ID}/${QUEUE_NAME} \
+      --profile $AWS_PROFILE_NAME
+  done
+
+  # delete s3 bucket
+  aws s3 rm s3://"$BUCKET_NAME" --recursive --profile $AWS_PROFILE_NAME
+  aws s3api delete-bucket \
+    --bucket $BUCKET_NAME \
+    --region $AWS_REGION \
+    --profile $AWS_PROFILE_NAME
+  echo "✅ delete-bucket: $BUCKET_NAME"
+
+
+  aws iam remove-user-from-group \
+    --user-name $USER_NAME \
+    --group-name $GROUP_NAME \
+    --profile $AWS_PROFILE_NAME
+  echo "✅ remove-user-from-group: $USER_NAME"
+
+  aws iam delete-user \
+    --user-name $USER_NAME \
+    --profile $AWS_PROFILE_NAME
+  echo "✅ delete-user: $USER_NAME"
+
+  aws iam detach-group-policy \
+    --group-name $GROUP_NAME \
+    --policy-arn arn:aws:iam::${AWS_ACCOUNT_ID}:policy/${POLICY_NAME} \
+    --profile $AWS_PROFILE_NAME
+  echo "✅ detach-group-policy: $GROUP_NAME"
+
+  aws iam delete-group \
+    --group-name $GROUP_NAME \
+    --profile $AWS_PROFILE_NAME
+  echo "✅ delete-group: $GROUP_NAME"
+
+  aws iam delete-policy \
+    --policy-arn arn:aws:iam::${AWS_ACCOUNT_ID}:policy/${POLICY_NAME} \
+    --profile $AWS_PROFILE_NAME
+  echo "✅ delete-policy: $POLICY_NAME"
+}
+
+getBucketName() {
+  if [ -z "$1" ] || [ -z "$2" ]; then
+    echo "Error: Both customer name and environment are required as input parameters." >&2
+    return 1
+  fi
+
+  CUSTOMER=$1
+  ENV=$2
+
+  sanitize_string() {
+    echo "$1" | sed 's/[^a-zA-Z0-9]/-/g' | tr '[:upper:]' '[:lower:]'
+  }
+
+  CUSTOMER_SAN=$(sanitize_string "$CUSTOMER")
+  # Optional log:
+  >&2 echo "🔧 sanitized customer name: $CUSTOMER_SAN"
+
+  echo "blu-mid-server-${CUSTOMER_SAN}-${ENV}"
+}
+
+
+getPolicyName() {
+  if [ -z "$1" ] || [ -z "$2" ]; then
+    echo "Error: Both customer name and environment are required as input parameters." >&2
+    return 1
+  fi
+
+  CUSTOMER=$1
+  ENV=$2
+
+  POLICY_NAME="mid_server_${CUSTOMER}_${ENV}_policy"
+  echo "$POLICY_NAME"
+}
+
+getGroupName() {
+  if [ -z "$1" ] || [ -z "$2" ]; then
+    echo "Error: Both customer name and environment are required as input parameters." >&2
+    return 1
+  fi
+
+  CUSTOMER=$1
+  ENV=$2
+
+  GROUP_NAME="mid_server_${CUSTOMER}_${ENV}"
+  echo "$GROUP_NAME"
+}
+
+getUserName() {
+  if [ -z "$1" ] || [ -z "$2" ]; then
+    echo "Error: Both customer name and environment are required as input parameters." >&2
+    return 1
+  fi
+
+  CUSTOMER=$1
+  ENV=$2
+
+  USER_NAME="mid_server_${CUSTOMER}_${ENV}"
+  echo "$USER_NAME"
+}
 
 
 # Set list of themes to pick from when loading at random
