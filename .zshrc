@@ -83,9 +83,13 @@ docker-local() {
     return 1
   fi
 
-  docker-compose down
-  docker-compose build
-  docker-compose up
+  docker container prune -f
+  docker image prune -f
+  docker system prune -f
+
+  docker compose down
+  docker compose build
+  docker compose up
 }
 
 # deploy to ecr
@@ -93,7 +97,7 @@ docker-deploy-to-ecr() {
   local name
   name=$(get_docker_name) || return 1
 
-  allowed_names=("blu_intune" "blu_outlook" "blu_toolbox")
+  allowed_names=("blu_intune" "blu_outlook" "blu_toolbox" "blu_m365_auto" "blu_contracts" "blu_e2e_test", "blu_baramundi")
   if [[ ! " ${allowed_names[@]} " =~ " $name " ]]; then
     echo "Error: '$name' is not allowed to be deployed to ecr." >&2
     return 1
@@ -109,9 +113,7 @@ docker-deploy-to-ecr() {
   docker push $AWS_ECR_URL/"$name":latest
 }
 
-# deploys to docker hub
-DOCKER_HUB_ACCOUNT_NAME="hannesschaletzky"
-docker-deploy-to-dockerhub() {
+docker-deploy-mid-server() {
   local name version
   name=$(get_docker_name) || return 1
   version=$(node -p "require('./package.json').version")
@@ -124,20 +126,24 @@ docker-deploy-to-dockerhub() {
     echo "Error: version not found in package.json." >&2
     return 1
   fi
+  
+
+  aws ecr get-login-password \
+    | docker login --username AWS --password-stdin $AWS_ECR_URL || return 1
 
   docker build \
     -f Dockerfile.prod \
     --no-cache \
     --platform linux/amd64 \
-    -t $name .
-  
-  docker tag $name $DOCKER_HUB_ACCOUNT_NAME/"$name":latest
-  docker tag $name $DOCKER_HUB_ACCOUNT_NAME/"$name":v$version
-  
-  docker push $DOCKER_HUB_ACCOUNT_NAME/"$name":latest
-  docker push $DOCKER_HUB_ACCOUNT_NAME/"$name":v$version
+    -t $name . || return 1
 
-  echo "✅ published v$version to $DOCKER_HUB_ACCOUNT_NAME/$name"
+  docker tag $name $AWS_ECR_URL/"$name":latest
+  docker tag $name $AWS_ECR_URL/"$name":v$version
+
+  docker push $AWS_ECR_URL/"$name":latest
+  docker push $AWS_ECR_URL/"$name":v$version
+
+  echo "✅ published v$version and :latest to $AWS_ECR_URL/"$name""
 }
 
 # -> publish mid server
@@ -184,13 +190,17 @@ createMidServerResources() {
   GROUP_NAME=$(getGroupName "$CUSTOMER" "$ENV")
   USER_NAME=$(getUserName "$CUSTOMER" "$ENV")
   BUCKET_NAME=$(getBucketName "$CUSTOMER" "$ENV")
+  LOG_GROUP_NAME=$(getLogGroupName "$CUSTOMER" "$ENV")
+  DOWNLOADS_DIR="/Users/hannesschaletzky/Downloads"
+
   echo "Customer: $CUSTOMER"
   echo "Env: $ENV"
   echo "Policy: $POLICY_NAME"
   echo "Group: $GROUP_NAME"
   echo "User: $USER_NAME"
   echo "Bucket: $BUCKET_NAME"
-
+  echo "LogGroup: $LOG_GROUP_NAME"
+  echo "DOWNLOADS_DIR: $DOWNLOADS_DIR"
 
   echo "Creating SQS Queues for customer: $CUSTOMER"
   for queue_type in in out;
@@ -210,57 +220,77 @@ createMidServerResources() {
       "FifoThroughputLimit": "perMessageGroupId"
     }' \
     --profile $AWS_PROFILE_NAME
-  echo "✅ ${QUEUE_NAME} created"
+    echo "✅ ${QUEUE_NAME} created"
   done
-  
-  # create S3 bucket
+
   aws s3api create-bucket \
-  --bucket "${BUCKET_NAME}" \
-  --region "${AWS_REGION}" \
-  --create-bucket-configuration LocationConstraint="${AWS_REGION}" \
-  --profile $AWS_PROFILE_NAME
+    --bucket "${BUCKET_NAME}" \
+    --region "${AWS_REGION}" \
+    --create-bucket-configuration LocationConstraint="${AWS_REGION}" \
+    --profile $AWS_PROFILE_NAME
   echo "✅ S3 bucket created: ${BUCKET_NAME}"
 
-  # create IAM Policy
   POLICY_DOCUMENT=$(cat <<EOF
 {
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Sid": "1",
-            "Effect": "Allow",
-            "Action": [
-                "sqs:DeleteMessage",
-                "sqs:ReceiveMessage"
-            ],
-            "Resource": "arn:aws:sqs:${AWS_REGION}:${AWS_ACCOUNT_ID}:${CUSTOMER}_${ENV}_in.fifo"
-        },
-        {
-            "Sid": "2",
-            "Effect": "Allow",
-            "Action": [
-                "sqs:SendMessage"
-            ],
-            "Resource": "arn:aws:sqs:${AWS_REGION}:${AWS_ACCOUNT_ID}:${CUSTOMER}_${ENV}_out.fifo"
-        },
-        {
-            "Sid": "3",
-            "Effect": "Allow",
-            "Action": [
-                "s3:PutObject"
-            ],
-            "Resource": "arn:aws:s3:::${BUCKET_NAME}/*"
-        }
-    ]
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "1",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:DeleteMessage",
+        "sqs:ReceiveMessage"
+      ],
+      "Resource": "arn:aws:sqs:${AWS_REGION}:${AWS_ACCOUNT_ID}:${CUSTOMER}_${ENV}_in.fifo"
+    },
+    {
+      "Sid": "2",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:SendMessage"
+      ],
+      "Resource": "arn:aws:sqs:${AWS_REGION}:${AWS_ACCOUNT_ID}:${CUSTOMER}_${ENV}_out.fifo"
+    },
+    {
+      "Sid": "3",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject"
+      ],
+      "Resource": "arn:aws:s3:::${BUCKET_NAME}/*"
+    },
+    {
+      "Sid": "4",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:PutItem"
+      ],
+      "Resource": "arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/mid_server_status"
+    },
+    {
+      "Sid": "5",
+      "Effect": "Allow",
+      "Action": [
+        "logs:PutLogEvents",
+        "logs:CreateLogStream",
+        "logs:DescribeLogStreams"
+      ],
+      "Resource": "arn:aws:logs:${AWS_REGION}:${AWS_ACCOUNT_ID}:log-group:${LOG_GROUP_NAME}:*"
+    },
+    {
+      "Sid": "6",
+      "Effect": "Allow",
+      "Action": "logs:DescribeLogGroups",
+      "Resource": "*"
+    }
+  ]
 }
 EOF
 )
 
-  # save policy JSON to a file
   POLICY_FILE="/tmp/${POLICY_NAME}.json"
   echo "$POLICY_DOCUMENT" > "$POLICY_FILE"
 
-  # create IAM Policy
   POLICY_ARN=$(aws iam create-policy \
     --policy-name ${POLICY_NAME} \
     --policy-document "file://${POLICY_FILE}" \
@@ -268,29 +298,71 @@ EOF
     --profile $AWS_PROFILE_NAME)
   echo "✅ IAM Policy created: ${POLICY_ARN}"
 
-  # create IAM User Group
   aws iam create-group \
     --group-name $GROUP_NAME \
     --profile $AWS_PROFILE_NAME
   echo "✅ IAM Group created: $GROUP_NAME"
 
-  # attach policy to group
   aws iam attach-group-policy \
     --group-name $GROUP_NAME \
     --policy-arn $POLICY_ARN \
     --profile $AWS_PROFILE_NAME
-  echo "✅ attach-policy-to-group: $GROUP_NAME"  
+  echo "✅ attach-policy-to-group: $GROUP_NAME"
 
-  # create IAM User
   aws iam create-user \
     --user-name $USER_NAME \
     --profile $AWS_PROFILE_NAME
+  echo "✅ created user $USER_NAME"
+
   aws iam add-user-to-group \
     --user-name $USER_NAME \
     --group-name $GROUP_NAME \
     --profile $AWS_PROFILE_NAME
   echo "✅ add-user-to-group: $USER_NAME"
+
+  CUSTOM_USER_DOWNLOAD_PATH="${DOWNLOADS_DIR}/${USER_NAME}_credentials.json"
+  aws iam create-access-key \
+    --user-name $USER_NAME \
+    --profile $AWS_PROFILE_NAME \
+    --output json > "$CUSTOM_USER_DOWNLOAD_PATH"
+  echo "✅ created access key — saved to $CUSTOM_USER_DOWNLOAD_PATH"
+
+  aws logs create-log-group \
+    --log-group-name $LOG_GROUP_NAME \
+    --profile $AWS_PROFILE_NAME
+  echo "✅ created log group: $LOG_GROUP_NAME"
+
+  # === ECR IAM User ===
+  ECR_USER_NAME=$(getECRPullUserName "$CUSTOMER") || return 1
+  ECR_POLICY_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:policy/mid_server_ecr_pull_policy"
+  ECR_USER_DOWNLOAD_PATH="${DOWNLOADS_DIR}/${ECR_USER_NAME}_credentials.json"
+
+  echo "ECR_USER_NAME: $ECR_USER_NAME"
+  echo "ECR_POLICY_ARN: $ECR_POLICY_ARN"
+  echo "ECR_USER_DOWNLOAD_PATH: $ECR_USER_DOWNLOAD_PATH"
+
+  if ! aws iam get-user --user-name "$ECR_USER_NAME" --profile "$AWS_PROFILE_NAME" &>/dev/null; then
+    aws iam create-user \
+      --user-name "$ECR_USER_NAME" \
+      --profile "$AWS_PROFILE_NAME"
+    echo "✅ created user $ECR_USER_NAME"
+
+    aws iam attach-user-policy \
+      --user-name "$ECR_USER_NAME" \
+      --policy-arn "$ECR_POLICY_ARN" \
+      --profile "$AWS_PROFILE_NAME"
+    echo "✅ attached policy to $ECR_USER_NAME"
+
+    aws iam create-access-key \
+      --user-name "$ECR_USER_NAME" \
+      --profile "$AWS_PROFILE_NAME" \
+      --output json > "$ECR_USER_DOWNLOAD_PATH"
+    echo "✅ created access key — saved to $ECR_USER_DOWNLOAD_PATH"
+  else
+    echo "ECR user $ECR_USER_NAME already exists — skipping."
+  fi
 }
+
 
 deleteMidServerResources() {
   if [ -z "$1" ]; then
@@ -304,12 +376,16 @@ deleteMidServerResources() {
   GROUP_NAME=$(getGroupName "$CUSTOMER" "$ENV")
   USER_NAME=$(getUserName "$CUSTOMER" "$ENV")
   BUCKET_NAME=$(getBucketName "$CUSTOMER" "$ENV")
+  ECR_USER_NAME=$(getECRPullUserName "$CUSTOMER") || return 1
+  LOG_GROUP_NAME=$(getLogGroupName "$CUSTOMER" "$ENV")
   echo "Customer: $CUSTOMER"
   echo "Env: $ENV"
   echo "Policy: $POLICY_NAME"
   echo "Group: $GROUP_NAME"
   echo "User: $USER_NAME"
   echo "Bucket: $BUCKET_NAME"
+  echo "ECR_USER_NAME: $ECR_USER_NAME"
+  echo "LogGroup: $LOG_GROUP_NAME"
 
   for queue_type in in out;
   do
@@ -327,34 +403,68 @@ deleteMidServerResources() {
     --profile $AWS_PROFILE_NAME
   echo "✅ delete-bucket: $BUCKET_NAME"
 
-
+  # remove user from group
   aws iam remove-user-from-group \
     --user-name $USER_NAME \
     --group-name $GROUP_NAME \
     --profile $AWS_PROFILE_NAME
   echo "✅ remove-user-from-group: $USER_NAME"
 
+  # delete user and access keys
+  deleteAllAccessKeys "$USER_NAME"
   aws iam delete-user \
     --user-name $USER_NAME \
     --profile $AWS_PROFILE_NAME
   echo "✅ delete-user: $USER_NAME"
 
+  # detach policy from group
   aws iam detach-group-policy \
     --group-name $GROUP_NAME \
     --policy-arn arn:aws:iam::${AWS_ACCOUNT_ID}:policy/${POLICY_NAME} \
     --profile $AWS_PROFILE_NAME
   echo "✅ detach-group-policy: $GROUP_NAME"
 
+  # delete group
   aws iam delete-group \
     --group-name $GROUP_NAME \
     --profile $AWS_PROFILE_NAME
   echo "✅ delete-group: $GROUP_NAME"
 
+  # delete policy
   aws iam delete-policy \
     --policy-arn arn:aws:iam::${AWS_ACCOUNT_ID}:policy/${POLICY_NAME} \
     --profile $AWS_PROFILE_NAME
   echo "✅ delete-policy: $POLICY_NAME"
+
+  # delete log group
+  aws logs delete-log-group \
+    --log-group-name $LOG_GROUP_NAME \
+    --profile $AWS_PROFILE_NAME
+  echo "✅ delete-log-group: $LOG_GROUP_NAME"
+
+  echo "‼️ if it was the last resource for the customer, delete ECR user manually: $ECR_USER_NAME"
 }
+
+deleteAllAccessKeys() {
+  local user=$1
+  echo "🔍 Deleting access keys for user: $user"
+
+  local keys
+  keys=$(aws iam list-access-keys \
+    --user-name "$user" \
+    --query 'AccessKeyMetadata[*].AccessKeyId' \
+    --output text \
+    --profile "$AWS_PROFILE_NAME")
+
+  for key in $keys; do
+    aws iam delete-access-key \
+      --user-name "$user" \
+      --access-key-id "$key" \
+      --profile "$AWS_PROFILE_NAME"
+    echo "✅ deleted access key: $key"
+  done
+}
+
 
 getBucketName() {
   if [ -z "$1" ] || [ -z "$2" ]; then
@@ -403,6 +513,19 @@ getGroupName() {
   echo "$GROUP_NAME"
 }
 
+getLogGroupName() {
+  if [ -z "$1" ] || [ -z "$2" ]; then
+    echo "Error: Both customer name and environment are required as input parameters." >&2
+    return 1
+  fi
+
+  CUSTOMER=$1
+  ENV=$2
+
+  LOG_GROUP_NAME="/mid_server/${CUSTOMER}/${ENV}"
+  echo "$LOG_GROUP_NAME"
+}
+
 getUserName() {
   if [ -z "$1" ] || [ -z "$2" ]; then
     echo "Error: Both customer name and environment are required as input parameters." >&2
@@ -415,6 +538,49 @@ getUserName() {
   USER_NAME="mid_server_${CUSTOMER}_${ENV}"
   echo "$USER_NAME"
 }
+
+getECRPullUserName() {
+  local customer="$1"
+
+  if [[ -z "$customer" ]]; then
+    echo "Error: Customer name is required." >&2
+    return 1
+  fi
+
+  echo "mid_server_${customer}_ECR"
+}
+
+
+function gen_azure_cert() {
+  if [[ -z "$1" ]]; then
+    echo "❌ Usage: gen_azure_cert <name>"
+    return 1
+  fi
+
+  local NAME="$1"
+  local OUT_DIR=~/Downloads/"$NAME"
+  local KEY="$OUT_DIR/${NAME}.key"
+  local CSR="$OUT_DIR/${NAME}.csr"
+  local CRT="$OUT_DIR/${NAME}.crt"
+  local PFX="$OUT_DIR/${NAME}.pfx"
+  local PASSWORD="ChangeMe123!"
+
+  mkdir -p "$OUT_DIR"
+
+  echo "🔐 Generating certificate for '$NAME' in $OUT_DIR..."
+
+  openssl genrsa -out "$KEY" 2048
+  openssl req -new -key "$KEY" -out "$CSR" -subj "/CN=${NAME}"
+  openssl x509 -req -in "$CSR" -signkey "$KEY" -out "$CRT" -days 1825 # 5 years
+  openssl pkcs12 -export -out "$PFX" -inkey "$KEY" -in "$CRT" -passout pass:$PASSWORD
+
+  echo "✅ Certificate files stored in: $OUT_DIR"
+  echo "🔑 PFX password: $PASSWORD"
+  echo "📌 SHA1 Thumbprint:"
+  openssl x509 -in "$CRT" -noout -fingerprint -sha1 | sed 's/SHA1 Fingerprint=//'
+}
+
+
 
 
 # Set list of themes to pick from when loading at random
