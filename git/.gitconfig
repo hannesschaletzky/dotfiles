@@ -1,0 +1,10 @@
+[user]
+	name = Hannes Schaletzky
+	email = hannes.schaletzky@gmx.de
+[init]
+	defaultBranch = main
+[core]
+	excludesfile = ~/.gitignore_global
+# Rechnerspezifisches (z. B. andere E-Mail für Kundenrepos), nicht im Repo
+[include]
+	path = ~/.gitconfig.local

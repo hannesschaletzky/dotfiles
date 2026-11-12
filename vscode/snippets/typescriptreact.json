@@ -1,0 +1,13 @@
+{
+  // // Example:
+  // "Print empty": {
+  //   "prefix": "cll",
+  //   "body": ["console.log($1)"],
+  //   "description": "Log output to console"
+  // },
+  // "Print string": {
+  //   "prefix": "cls",
+  //   "body": ["console.log('$1');", "$2"],
+  //   "description": "Log output to console"
+  // }
+}

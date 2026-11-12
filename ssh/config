@@ -1,0 +1,8 @@
+# ~/.ssh/config ist ein Symlink hierher.
+# Eigene Server und Kundenhosts stehen in ~/.ssh/config.local (nicht im Repo).
+Include ~/.ssh/config.local
+
+Host github.com
+  HostName github.com
+  PreferredAuthentications publickey
+  IdentityFile ~/.ssh/github

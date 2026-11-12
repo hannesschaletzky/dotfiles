@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Schutz für ein öffentliches Repo: blockiert Commits mit Zugangsdaten oder Kundendetails.
+# Kundenspezifisches gehört in ~/.zshrc.local, ~/.ssh/config.local oder ~/.gitconfig.local.
+# Im Notfall (bewusst!) umgehen mit: git commit --no-verify
+set -euo pipefail
+
+patterns=(
+  '-----BEGIN [A-Z ]*PRIVATE KEY-----'                        # private Schlüssel
+  '(TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY)[A-Z_]*=["'\'']?[^"'\''[:space:]$]{6,}' # Werte in Variablen
+  '"(password|token|secret)"[[:space:]]*:[[:space:]]*"[^"]+' # Werte in JSON
+  'AKIA[0-9A-Z]{16}'                                          # AWS Access Key
+  'gh[pousr]_[A-Za-z0-9]{30,}'                                # GitHub Token
+  '[0-9]{12}\.dkr\.ecr\.|arn:aws:[a-z0-9-]+:[a-z0-9-]*:[0-9]{12}' # AWS-Konto-IDs
+  '@?blu[_-]|mssql\.connections'                              # Kundenbezüge
+)
+
+added=$(git diff --cached --unified=0 --no-color | grep -E '^\+[^+]' || true)
+found=0
+for p in "${patterns[@]}"; do
+  if hits=$(printf '%s\n' "$added" | grep -inE -- "$p"); then
+    echo "✋ pre-commit: verdächtiger Inhalt (Muster: $p)" >&2
+    printf '%s\n' "$hits" | cut -c1-120 >&2
+    found=1
+  fi
+done
+exit $found
