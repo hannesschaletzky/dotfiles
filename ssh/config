@@ -3,6 +3,6 @@
 Include ~/.ssh/config.local
 
 Host github.com
-  HostName github.com
-  PreferredAuthentications publickey
-  IdentityFile ~/.ssh/github
+HostName github.com
+PreferredAuthentications publickey
+IdentityFile ~/.ssh/github

@@ -34,7 +34,7 @@ link vscode/keybindings.json "$VSCODE/keybindings.json"
 link vscode/snippets         "$VSCODE/snippets"
 
 # Lokale Dateien für Rechnerspezifisches anlegen, falls sie fehlen (bleiben außerhalb des Repos)
-for f in "$HOME/.zshrc.local" "$HOME/.ssh/config.local" "$HOME/.gitconfig.local"; do
+for f in "$HOME/.zshrc.local" "$HOME/.ssh/config.local"; do
   [[ -e "$f" ]] || { touch "$f"; chmod 600 "$f"; echo "neu     $f"; }
 done
 
