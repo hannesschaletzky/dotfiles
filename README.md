@@ -36,8 +36,8 @@ client-specific goes into files that are **not** part of the repo and are loaded
 | `~/.ssh/config.local` | own servers and client hosts |
 | `~/.gitconfig.local` | e.g. a different email for client repos |
 
-A pre-commit hook (`.githooks/`, enabled by `install.sh`) blocks commits that look like credentials, AWS account
-IDs or client references.
+A pre-commit hook (`.githooks/`, enabled by `install.sh`) blocks commits that look like credentials or AWS account
+IDs.
 
 ## Keeping the Brewfile current
 
